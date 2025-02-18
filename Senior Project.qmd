@@ -1,0 +1,795 @@
+---
+title: "Methodology"
+author: "Dante Erz"
+format: html
+editor: source
+---
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(AER)
+library(adaptTest)
+library(haven)
+library(readxl)
+library(plm)
+library(mlogit)
+library(car)
+library(MASS)
+library(leaps)
+library(knitr)
+```
+
+
+```{r}
+library(tidyverse)
+library(lmtest)
+library(readxl)
+library(readr)
+
+NBAData <- read_excel('nbaplayerdata.xlsx')
+DraftData <- read_csv('nbaplayersdraft.csv')
+DraftData2022 <- read_csv('DraftData2022.txt')
+NBAstats2020 <- read_csv('NBA_Stats_2020.txt')
+NBAstats2021 <- read_csv('NBA_Stats_2021.txt')
+NBAstats2022 <- read_csv('NBA_Stats_2022.txt')
+NBAstats2023 <- read_csv('NBA_Stats_2023.txt')
+NBAData_Adv2020 <- read_csv('AdvStats2020.txt')
+NBAData_Adv2021 <- read_csv('AdvStats2021.txt')
+NBAData_Adv2022 <- read_csv('AdvStats2022.txt')
+NBAData_Adv2023 <- read_csv('AdvStats2023.txt')
+NBAsalary2020 <- read_csv('NBA_Salaries_2020.csv')
+NBAsalary2021 <- read_csv('NBA_Salaries_2021.csv')
+NBAsalary2022 <- read_csv('NBA_Salaries_2022.csv')
+NBAsalary2023 <- read_csv('NBA_Salaries_2023.csv')
+
+NBAData2020 <- left_join(NBAstats2020, NBAData_Adv2020, by = 'Player')
+NBAData2020 <- left_join(NBAData2020, NBAsalary2020, by = 'Player')
+NBAData2021 <- left_join(NBAstats2021, NBAData_Adv2021, by = 'Player')
+NBAData2021 <- left_join(NBAData2021, NBAsalary2021, by = 'Player')
+NBAData2022 <- left_join(NBAstats2022, NBAData_Adv2022, by = 'Player')
+NBAData2022 <- left_join(NBAData2022, NBAsalary2022, by = 'Player')
+NBAData2023 <- left_join(NBAstats2023, NBAData_Adv2023, by = 'Player')
+NBAData2023 <- left_join(NBAData2023, NBAsalary2023, by = 'Player')
+
+colnames(DraftData2022) <- DraftData2022[1,]
+DraftData2022 <- DraftData2022[-1,]
+DraftData2022 <- DraftData2022|>
+  dplyr::select(Rk, Player, Pk)|>
+  rename(player = Player,
+         rank = Rk,
+         overall_pick = Pk)|>
+  mutate(year = 2022)
+
+DraftData2022$rank <- as.double(DraftData2022$rank)
+DraftData2022$overall_pick <- as.double(DraftData2022$overall_pick)
+
+DraftData <- full_join(DraftData, DraftData2022)
+
+NBAData2020 <- NBAData2020|>
+  mutate(year = 2020)
+NBAData2021 <- NBAData2021|>
+  mutate(year = 2021)
+NBAData2022 <- NBAData2022|>
+  mutate(year = 2022)
+NBAData2023 <- NBAData2023|>
+  mutate(year = 2023)
+
+NBAData2 <- full_join(NBAData2020, NBAData2021)
+NBAData2 <- full_join(NBAData2, NBAData2022)
+NBAData2 <- full_join(NBAData2, NBAData2023)
+
+NBAData2 <- NBAData2|>
+  mutate(Salary = parse_number(Salary))|>
+  rename(salary = Salary,
+         age = "Age.x",
+         player = Player,
+         winshares = WS,
+         per = PER,
+         games = "G.x")|>
+  dplyr::select(player, age, salary, winshares, per, year, games)
+#view(NBAData2)
+
+NBAData <- full_join(NBAData, NBAData2)
+
+DraftData <- DraftData |>
+  dplyr::select(player, overall_pick)
+
+NBAData <- NBAData |>
+  dplyr::select(player, year, age, salary, winshares, per, games)
+
+NBAData <- left_join(NBAData, DraftData)
+  
+#View(NBAData)
+
+NBAData$cap <-ifelse(NBAData$year == 2005, 49500000,
+         ifelse(NBAData$year == 2006, 53135000,
+         ifelse(NBAData$year == 2007, 55630000,
+         ifelse(NBAData$year == 2008, 58680000,
+         ifelse(NBAData$year == 2009, 57700000,
+         ifelse(NBAData$year == 2010, 58040000,
+         ifelse(NBAData$year == 2011, 58044000,
+         ifelse(NBAData$year == 2012, 58044000,
+         ifelse(NBAData$year == 2013, 58679000,
+         ifelse(NBAData$year == 2014, 63065000,
+         ifelse(NBAData$year == 2015, 70000000,
+         ifelse(NBAData$year == 2016, 94143000,
+         ifelse(NBAData$year == 2017, 99093000,
+         ifelse(NBAData$year == 2018, 101869000,
+         ifelse(NBAData$year == 2019, 109140000,
+         ifelse(NBAData$year == 2020, 109140000,
+         ifelse(NBAData$year == 2021, 112414000,
+         ifelse(NBAData$year == 2022, 123655000, 136021000))))))))))))))))))
+
+NBAData <- NBAData |>
+  group_by(player) |>
+  mutate(experience = row_number(),
+         salary_pctcap = salary/cap)
+
+
+NBAData <- na.omit(NBAData)
+NBAData <- NBAData |>
+  filter(games > 19)
+
+NBAData_rookies <- NBAData |>
+  filter(experience <= 4,
+         salary != 0,
+         overall_pick <= 30,
+         age <= 26,
+         age < 25 | salary < 6000000,
+         salary_pctcap < .126)
+
+NBAData_vets <- NBAData |>
+  filter(experience > 4,
+         salary != 0,
+         overall_pick <= 30)
+NBAData_vets <- NBAData_vets[-860, ]
+
+NBAData_vets <- NBAData_vets|>
+  filter(salary_pctcap < .25)
+
+view(NBAData_rookies)
+view(NBAData_vets)
+
+```
+
+```{r}
+numtrain_vets = ceiling(.8 * 2278) 
+set.seed(333)
+train_ind_vets = sample(2278, numtrain_vets)
+traindata_vets = NBAData_vets[train_ind_vets, ] 
+#view(traindata_vets)
+```
+
+
+```{r}
+
+vet_mod <- lm(sqrt(salary_pctcap) ~ winshares + per, data = traindata_vets)
+summary(vet_mod)
+coeftest(vet_mod, vcov = vcovHC(vet_mod, type="HC1"))
+
+boxcox(salary_pctcap ~ winshares + per, data = traindata_vets, plotit=TRUE, lambda=seq(-2,3,length=100))
+
+shapiro.test(resid(vet_mod))
+bptest(vet_mod)
+vif(vet_mod)
+plot(vet_mod)
+
+
+```
+
+```{r}
+testdata_vets = NBAData_vets[-train_ind_vets, ]
+predicted_vets = predict(vet_mod, testdata_vets)
+predicted_vets = predicted_vets^2
+actual_vets = testdata_vets$salary_pctcap
+difference_vets = predicted_vets - actual_vets
+difference_vetssq = difference_vets^2
+MSPE_vets = mean(difference_vetssq)
+
+#calculate MSE
+print("MSE")
+summ_vets <- summary(vet_mod)
+mean(summ_vets$residuals^2)
+print("MSPE")
+MSPE_vets
+
+e_i_vets = resid(vet_mod) #residuals
+h_i_vets = hatvalues(vet_mod) #leverages
+SST_vets = sum((anova(vet_mod))$'Sum Sq') #SSTotal
+
+PRESS_vets = sum( (e_i_vets/(1-h_i_vets))^2 )
+Pred_Rsq_vets = 1-PRESS_vets/SST_vets
+print("PRESS")
+PRESS_vets
+
+print("Predictive R squared")
+Pred_Rsq_vets
+
+SSE_vets <- sum(vet_mod$residuals^2)
+print("SSE")
+SSE_vets
+```
+
+
+```{r}
+rookieData <- NBAData_rookies|>
+  filter(year > 2004)
+
+rookieData$market_salary_sqrt <- predict(vet_mod, newdata = rookieData)
+rookieData$market_salary <- rookieData$market_salary_sqrt^2
+
+rookieData <- rookieData |>
+  mutate(team_surplus = market_salary - salary_pctcap,
+         team_surplus_adj = team_surplus + .055,
+         team_suplus_sal = team_surplus * cap,
+         team_surplus_2023 = team_surplus * 136021000)
+
+view(rookieData)
+```
+
+```{r}
+rookieData <- rookieData[-c(12, 75, 863), ]
+
+numtrain_rooks = ceiling(.8 * 1605) 
+set.seed(333)
+train_ind_rooks = sample(1605, numtrain_rooks)
+traindata_rooks = rookieData[train_ind_rooks, ] 
+#view(traindata_rooks)
+```
+
+
+```{r}
+mean_surplus <- rookieData |>
+  group_by(overall_pick) |>
+  summarise(mean_surplus = mean(team_suplus_sal),
+            mean_winshares = mean(winshares),
+            mean_salary = mean(salary),
+            mean_surpluspct = mean(team_surplus),
+            mean_surplus_2023 = mean_surpluspct * 136021000,
+            salary_2023 = mean(salary_pctcap) * 136021000) 
+
+mean_surplus |>
+  ggplot(aes(x = overall_pick, y = mean_surplus_2023)
+         )+
+  geom_line() + 
+  theme_minimal() +
+  labs(x = "Overall Draft Pick",
+       y = "",
+       subtitle = "Mean Team Surplus (2023 $)"
+  )
+
+mean_surplus |>
+  ggplot(aes(x = overall_pick, y = mean_winshares)
+         ) +
+  geom_line() +
+  theme_minimal() +
+  labs(x = "Overall Draft Pick",
+       y = "",
+       subtitle = "Mean Win Shares")
+
+mean_surplus |>
+  ggplot(aes(x = overall_pick, y = mean_salary)
+         ) +
+  geom_line() +
+  theme_minimal() +
+  labs(x = "Overall Draft Pick",
+       y = "",
+       subtitle = "Mean Salary ($)")
+
+
+#view(mean_surplus)
+```
+
+
+```{r}
+
+rook_mod <- lm(log(team_surplus_adj) ~ overall_pick + experience, data = traindata_rooks)
+coeftest(rook_mod, vcov = vcovHC(rook_mod, type="HC1"))
+
+summary(rook_mod)
+
+#rook_mod2 <- lm(team_surplus ~ overall_pick + experience, data = traindata_rooks)
+#summary(rook_mod2)
+
+#boxcox(team_surplus_adj ~ overall_pick + experience, data = rookieData, plotit=TRUE, lambda=seq(-2,3,length=100))
+
+plot(rook_mod)
+shapiro.test(resid(rook_mod))
+bptest(rook_mod)
+vif(rook_mod)
+```
+
+
+
+```{r}
+testdata_rooks = rookieData[-train_ind_rooks, ]
+predicted_rooks = predict(rook_mod, testdata_rooks)
+predicted_rooks = (exp(1)^(predicted_rooks)) - .055
+actual_rooks = testdata_rooks$salary_pctcap
+difference_rooks = predicted_rooks - actual_rooks
+difference_rookssq = difference_rooks^2
+MSPE_rooks = mean(difference_rookssq)
+
+#calculate MSE
+print("MSE")
+summ_rooks <- summary(rook_mod)
+mean(summ_rooks$residuals^2)
+print("MSPE")
+MSPE_rooks
+
+e_i_rooks = resid(rook_mod) #residuals
+h_i_rooks = hatvalues(rook_mod) #leverages
+SST_rooks = sum((anova(rook_mod))$'Sum Sq') #SSTotal
+
+PRESS_rooks = sum( (e_i_rooks/(1-h_i_rooks))^2 )
+Pred_Rsq_rooks = 1-PRESS_rooks/SST_rooks
+print("PRESS")
+PRESS_rooks
+
+print("Predictive R squared")
+Pred_Rsq_rooks
+
+SSE_rooks <- sum(rook_mod$residuals^2)
+print("SSE")
+SSE_rooks
+```
+
+```{r}
+ttest <- t.test(rookieData$team_suplus_sal, paired = FALSE)
+t.test(rookieData$team_suplus_sal)$conf.int
+ttest
+```
+
+```{r}
+overall_picks <- 1:30
+experience <- 1:4
+
+table <- expand.grid(overall_pick = overall_picks, experience = experience)
+
+table$prediction <- predict(rook_mod, table)
+
+table$prediction_adj <- (exp(1)^(table$prediction)) - .055
+table$predicted_surplus <- table$prediction_adj * 136021000
+
+view(table)
+
+```
+
+```{r}
+library(kableExtra)
+webshot::install_phantomjs()
+
+
+table <- table |>
+  dplyr::select(overall_pick, experience, predicted_surplus)
+
+#assign a class    
+oldClass(table$predicted_surplus) <- c("money", oldClass(table$predicted_surplus))
+
+#S3 print method for the class    
+print.money <- function(x, ...) {
+  print.default(paste0("$", formatC(as.numeric(x), format="f", digits=0, big.mark=",")))
+}
+
+#format method, which is necessary for formating in a data.frame   
+format.money  <- function(x, ...) {
+  paste0("$", formatC(as.numeric(x), format="f", digits=0, big.mark=","))
+}
+
+table_wide <- pivot_wider(table, names_from = experience, values_from = predicted_surplus)
+table_wide <- table_wide |>
+  rename("Draft Pick" = overall_pick)
+
+table_wide %>%
+  kbl() %>%
+  kable_styling() %>%
+  add_header_above(c(" ", "Season" = 4)) %>%
+  save_kable("team_surplus.pdf")
+
+
+```
+
+
+```{r}
+mod3 <- lm(winshares ~ overall_pick, data = rookieData)
+summary(mod3)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+NBAData_rookies |>
+  ggplot(aes(x = overall_pick,
+             y = winshares)
+         ) +
+  geom_point()
+
+NBAData_rookies |>
+  ggplot(aes(x = overall_pick,
+             y = salary_pctcap)
+         ) +
+  geom_point()
+
+NBAData_vets |>
+  ggplot(aes(x = winshares,
+             y = salary_pctcap)
+         ) +
+  geom_point()
+
+
+
+```
+
+
+```{r}
+NBAData_vets <- NBAData_vets|>
+  mutate(modelws = winshares)
+
+rookieData_mod <- NBAData_rookies|>
+  mutate(winshares = winshares+2.1001)
+
+draft_WS <- lm(log(winshares) ~ overall_pick + experience, data = rookieData_mod)
+summary(draft_WS)
+
+#draft_PER <- lm(per ~ overall_pick, data = NBAData_rookies)
+#summary(draft_PER)
+
+salary_vets <- lm(sqrt(salary) ~ modelws + factor(year), data = NBAData_vets)
+summary(salary_vets)
+
+salary_rook <- lm(log(salary) ~ overall_pick + factor(year), data = NBAData_rookies)
+summary(salary_rook)
+
+```
+
+
+```{r}
+
+library(leaps)
+
+plot(resid(draft_WS)~fitted(draft_WS), ylab = "Residuals", xlab = "Fitted")
+abline(h=0, lty = 2)
+qqnorm(resid(draft_WS), ylab = "Residuals"); qqline(resid(draft_WS), lty = 2)
+
+#rookieData_mod$resid <- resid(draft_WS)
+
+shapiro.test(resid(draft_WS))
+bptest(draft_WS)
+
+boxcox(winshares ~ overall_pick + factor(year), data = rookieData_mod, plotit=TRUE, lambda=seq(-2,3,length=100))
+boxcox(winshares ~ overall_pick + factor(year), data = rookieData_mod, plotit=TRUE, lambda=seq(-.1,.4,length=100))
+
+plot(resid(salary_vets)~fitted(salary_vets), ylab = "Residuals", xlab = "Fitted")
+abline(h=0, lty = 2)
+qqnorm(resid(salary_vets), ylab = "Residuals"); qqline(resid(salary_vets), lty = 2)
+
+shapiro.test(resid(salary_vets))
+bptest(salary_vets)
+plot(salary_vets)
+
+
+boxcox(salary ~ winshares + factor(year), data = NBAData_vets, plotit=TRUE, lambda=seq(-2,3,length=100))
+boxcox(salary ~ winshares + factor(year), data = NBAData_vets, plotit=TRUE, lambda=seq(-.1,.4,length=100))
+
+plot(salary_rook)
+shapiro.test(resid(salary_rook))
+bptest(salary_rook)
+
+boxcox(salary ~ overall_pick + factor(year), data = NBAData_rookies, plotit=TRUE, lambda=seq(-2,3,length=100))
+boxcox(salary ~ overall_pick + factor(year), data = NBAData_rookies, plotit=TRUE, lambda=seq(-.1,.4,length=100))
+```
+
+
+```{r}
+rookieData_mod$logws <- log(rookieData_mod$winshares)
+rookieData_mod$modelws <- (exp(1)^(predict(draft_WS)))-2.1001
+rookieData_mod$logpredictedWS <- predict(draft_WS)
+rookieData_mod$predicted_rookiesalary <- exp(1)^(predict(salary_rook))
+
+
+rookieData_mod <- rookieData_mod|>
+  filter(year > 2004)
+
+rookieData_mod$predicted_sqrt_salary <- predict(salary_vets, newdata = rookieData_mod)
+
+rookieData_mod$predicted_vetsalary <- rookieData_mod$predicted_sqrt_salary^2
+
+
+rookieData_mod <- rookieData_mod|>
+  mutate(team_surplus_player = predicted_vetsalary - salary,
+         team_surplurs_pick = predicted_vetsalary - predicted_rookiesalary)
+```
+
+```{r}
+ttest <- t.test(rookieData_mod$predicted_rookiesalary, rookieData_mod$predicted_vetsalary, paired = TRUE)
+ttest
+```
+
+
+
+
+```{r}
+table2 <- rookieData |>
+  group_by(overall_pick, experience) |>
+  summarise(mean_surplus = mean(team_surplus_2023))
+view(table2)
+
+table2_wide <- table2 |>
+  pivot_wider(id_cols = overall_pick,
+              names_from = experience,
+              values_from = mean_surplus)
+view(table2_wide)
+
+number2 <- rookieData|>
+  filter(overall_pick == 2,
+         experience == 1)
+view(number2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+library(fixest)
+
+NBAmod_winshares <- feols(winshares ~ lag(pts_pergame) + lag(pts_pergame, 2) + lag(trb_pergame) + lag(ast_pergame) + lag(pf_pergame) + lag(salary) + lag(tov_pergame) + lag(efgpct) + lag(defplusminus) | year, NBAData)
+
+NBAmod_salary <- feols(salary ~ lag(pts_pergame) + lag(pts_pergame, 2) + lag(trb_pergame) + lag(ast_pergame) + lag(pf_pergame) + lag(winshares) + lag(tov_pergame) + lag(efgpct) + lag(defplusminus) | year, NBAData)
+
+summary(NBAmod_winshares)
+summary(NBAmod_salary)
+
+#modelsummary::modelsummary(mod[c("xsect", "dummy", "demeaned", "FE")], 
+#                           statistic = 'std.error',
+#                           title = "Comparing Simple OLS, Dummy Variable, Demeaned, and FE Approaches",
+#                          coef_omit = "factor",
+#                           gof_omit = paste(NBAmod, "Std. erors", "R2", sep= "|"))
+```
+
+
+
+
+
+```{r}
+NBAData|>
+  select(def)
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+library(tidyverse)
+library(lmtest)
+NBA_Salaries_2015 <- read_csv("NBA_Salaries_2015.csv")
+NBA_Salaries_2016 <- read_csv("NBA_Salaries_2016.csv")
+NBA_Salaries_2017 <- read_csv("NBA_Salaries_2017.csv")
+NBA_Salaries_2018 <- read_csv("NBA_Salaries_2018.csv")
+NBA_Salaries_2019 <- read_csv("NBA_Salaries_2019.csv")
+NBA_Salaries_2020 <- read_csv("NBA_Salaries_2020.csv")
+NBA_Salaries_2021 <- read_csv("NBA_Salaries_2021.csv")
+NBA_Salaries_2022 <- read_csv("NBA_Salaries_2022.csv")
+NBA_Salaries_2023 <- read_csv("NBA_Salaries_2023.csv")
+
+
+NBA_Stats_2023 <- read_csv("NBA_Stats_2023.1.txt")
+NBA_Stats_2022 <- read_csv("NBA_Stats_2022.1.txt")
+NBA_Stats_2021 <- read_csv("NBA_Stats_2021.1.txt")
+NBA_Stats_2020 <- read_csv("NBA_Stats_2020.1.txt")
+NBA_Stats_2019 <- read_csv("NBA_Stats_2019.1.txt")
+NBA_Stats_2018 <- read_csv("NBA_Stats_2018.1.txt")
+NBA_Stats_2017 <- read_csv("NBA_Stats_2017.1.txt")
+NBA_Stats_2016 <- read_csv("NBA_Stats_2016.1.txt")
+NBA_Stats_2015 <- read_csv("NBA_Stats_2015.1.txt")
+
+NBA_AdvStats_2015 <- read_csv("NBA_AdvStats_2015.1.txt")
+NBA_AdvStats_2016 <- read_csv("NBA_AdvStats_2016.1.txt")
+NBA_AdvStats_2017 <- read_csv("NBA_AdvStats_2017.1.txt")
+NBA_AdvStats_2018 <- read_csv("NBA_AdvStats_2018.1.txt")
+NBA_AdvStats_2019 <- read_csv("NBA_AdvStats_2019.1.txt")
+NBA_AdvStats_2020 <- read_csv("NBA_AdvStats_2020.1.txt")
+NBA_AdvStats_2021 <- read_csv("NBA_AdvStats_2021.1.txt")
+NBA_AdvStats_2022 <- read_csv("NBA_AdvStats_2022.1.txt")
+NBA_AdvStats_2023 <- read_csv("NBA_AdvStats_2023.1.txt")
+```
+
+```{r}
+#Join the salary data set with the statistics data set
+
+NBAData_2015 <- full_join(NBA_Salaries_2015, NBA_Stats_2015, by = "Player")
+NBAData_2015 <- full_join(NBAData_2015, NBA_AdvStats_2015, by = "Player")
+
+NBAData_2016 <- full_join(NBA_Salaries_2016, NBA_Stats_2016, by = "Player")
+NBAData_2016 <- full_join(NBAData_2016, NBA_AdvStats_2016, by = "Player")
+
+NBAData_2017 <- full_join(NBA_Salaries_2017, NBA_Stats_2017, by = "Player")
+NBAData_2017 <- full_join(NBAData_2017, NBA_AdvStats_2017, by = "Player")
+
+NBAData_2018 <- full_join(NBA_Salaries_2018, NBA_Stats_2018, by = "Player")
+NBAData_2018 <- full_join(NBAData_2018, NBA_AdvStats_2018, by = "Player")
+
+NBAData_2019 <- full_join(NBA_Salaries_2019, NBA_Stats_2019, by = "Player")
+NBAData_2019 <- full_join(NBAData_2019, NBA_AdvStats_2019, by = "Player")
+
+NBAData_2020 <- full_join(NBA_Salaries_2020, NBA_Stats_2020, by = "Player")
+NBAData_2020 <- full_join(NBAData_2020, NBA_AdvStats_2020, by = "Player")
+
+NBAData_2021 <- full_join(NBA_Salaries_2021, NBA_Stats_2021, by = "Player")
+NBAData_2021 <- full_join(NBAData_2021, NBA_AdvStats_2021, by = "Player")
+
+NBAData_2022 <- full_join(NBA_Salaries_2022, NBA_Stats_2022, by = "Player")
+NBAData_2022 <- full_join(NBAData_2022, NBA_AdvStats_2022, by = "Player")
+
+NBAData_2023 <- full_join(NBA_Salaries_2023, NBA_Stats_2023, by = "Player")
+NBAData_2023 <- full_join(NBAData_2023, NBA_AdvStats_2023, by = "Player")
+
+view(NBAData_2015)
+view(NBAData_2016)
+view(NBAData_2017)
+view(NBAData_2018)
+view(NBAData_2019)
+view(NBAData_2020)
+view(NBAData_2021)
+view(NBAData_2022)
+view(NBAData_2023)
+```
+
+```{r}
+#Add a year variable to all players of that year
+
+NBAData_2015 <- NBAData_2015 |>
+  select(-`Player-additional.x`) |>
+  mutate(Year = 2015)
+
+NBAData_2016 <- NBAData_2016 |>
+  select(-`Player-additional.x`) |>
+  mutate(Year = 2016)
+
+NBAData_2017 <- NBAData_2017 |>
+  select(-`Player-additional.x`) |>
+  mutate(Year = 2017)
+
+NBAData_2018 <- NBAData_2018 |>
+  select(-`Player-additional.x`) |>
+  mutate(Year = 2018)
+
+NBAData_2019 <- NBAData_2019 |>
+  select(-`Player-additional.x`) |>
+  mutate(Year = 2019)
+
+NBAData_2020 <- NBAData_2020 |>
+  select(-`Player-additional.x`) |>
+  mutate(Year = 2020)
+
+NBAData_2021 <- NBAData_2021 |>
+  select(-`Player-additional.x`) |>
+  mutate(Year = 2021)
+
+NBAData_2022 <- NBAData_2022 |>
+  select(-`Player-additional.x`) |>
+  mutate(Year = 2022)
+
+NBAData_2023 <- NBAData_2023 |>
+  select(-`Player-additional.x`) |>
+  mutate(Year = 2023)
+
+
+
+```
+
+```{r}
+#Join the different years together
+
+
+NBAData_2015 <- NBAData_2015 |>
+  select(Salary, WS, PTS, TRB, AST, BLK, `eFG%`)
+view(NBAData_2015)
+NBAData_2015 <- na.omit(NBAData_2015)
+NBAData_2015$Salary <- gsub("\\$", "", NBAData_2015$Salary)
+
+# Convert the "Salary" column to numeric
+NBAData_2015$Salary <- as.numeric(gsub(",", "", NBAData_2015$Salary))
+
+
+mod_2015 <- lm(Salary ~ WS, data = NBAData_2015)
+summary(mod)
+
+NBAData_2016 <- NBAData_2016 |>
+  select(Salary, WS)
+view(NBAData_2016)
+NBAData_2016 <- na.omit(NBAData_2016)
+NBAData_2016$Salary <- gsub("\\$", "", NBAData_2016$Salary)
+
+# Convert the "Salary" column to numeric
+NBAData_2016$Salary <- as.numeric(gsub(",", "", NBAData_2016$Salary))
+
+
+mod_2016 <- lm(Salary ~ WS, data = NBAData_2016)
+summary(mod_2016)
+
+FullMod_2015 <- lm(Salary ~ WS + PTS + TRB + AST + BLK + `eFG%`, data = NBAData_2015)
+summary(FullMod_2015)
+
+mod3 <- lm(WS ~ `eFG%`, data = NBAData_2015)
+summary(mod3)
+
+```
+
+
+```{r}
+#Delete all NA values
+
+NBAData <- NBAData |>
+  rename("Salary_2023" = '2023 Salary' )|>
+  filter(Salary_2023 != 'NA',
+         PTS != 'NA',
+         TRB != 'NA',
+         AST != 'NA',
+         BLK != 'NA')
+NBAData <- na.omit(NBAData)
+
+#Make the salaries numeric values
+
+NBAData$Salary_2023 <- as.numeric(gsub("\\$", "", NBAData$Salary_2023))
+
+view(NBAData)
+
+```
+
+```{r}
+NBA_Model <- lm(Salary_2023 ~ PTS + TRB + AST + BLK, data = NBAData)
+summary(NBA_Model)
+sum(is.na(NBAData$BLK))
+sum(is.nan(NBAData$BLK))
+sum(is.infinite(NBAData$BLK))
+
+mean(NBAData$Salary_2023)
+mean(NBAData$BLK)
+```
+
